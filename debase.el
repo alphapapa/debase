@@ -219,14 +219,14 @@ it to the CLASS-NAME class."
        ;; Slot helpers -- getters and setf support.
        ,@(apply #'append (mapcar #'cdr slots-and-helpers)))))
 
-(defmacro define-debase-interface (bus service path interface)
+(defun define-debase-interface (bus service path interface)
   "Define class and methods for SERVICE, PATH, and INTERFACE, on BUS.
 
    The class name is taken from the interface, and cannot be specified."
   (let ((interface-def (thread-first
-                           (dbus-introspect-xml bus service path)
-                         (debase--interface interface))))
-    (define-debase-interface* interface-def bus service path)))
+                            (dbus-introspect-xml bus service path)
+                          (debase--interface interface))))
+    (eval (define-debase-interface* interface-def bus service path))))
 
  ;; Tests
 
