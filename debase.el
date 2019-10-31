@@ -79,21 +79,22 @@
            when (string= "in" (cdr (assoc 'direction (dom-attributes child))))
            collect (intern (cdr (assoc 'name (dom-attributes child))))))
 
-(defun debase--interface-method->defmethod (class-name method-def)
+(defun debase--interface-method->defmethod (class-name interface-name method-def)
   "Return the EIEIO method definition for method METHOD-DEF.
 
    The method will be dispatched on EIEIO class CLASS-NAME."
   (let ((method-name (cdr (assoc 'name (dom-attributes method-def))))
         (args (debase--interface-method->arglist method-def)))
     `(cl-defmethod ,(intern (debase--name-mangle method-name)) ((obj ,class-name) ,@args)
-       (with-slots (bus service path interface) obj
-         (dbus-call-method bus service path interface
+       (with-slots (bus service path) obj
+         (dbus-call-method bus service path ,interface
                            ,method-name
                            ,@args)))))
 
 (defun debase--interface->methods (class-name interface-def)
   "Return EIEIO methods for INTERFACE-DEF, bound to CLASS-NAME."
-  (mapcar (apply-partially #'debase--interface-method->defmethod class-name)
+  (mapcar (apply-partially #'debase--interface-method->defmethod class-name
+                           (cdr (assoc 'name (dom-attributes interface-name))))
           (debase--interface-methods interface-def)))
 
 (defun debase--property-readable? (property-def)
@@ -115,18 +116,18 @@
       :type t                           ; lol ugh FIXME
       :accessor ,(intern (debase--name-mangle (concat "prop-" property-name))))))
 
-(defun debase--property->dbus-accessor (class-name accessor-symbol property-name)
+(defun debase--property->dbus-accessor (class-name interface accessor-symbol property-name)
   "Return a default (D-Bus) property accessor.
 
 Creates a generic method template named ACCESSOR-SYMBOL, which
 returns the value of PROPERTY-NAME, and binds it to the
 CLASS-NAME class."
   `(cl-defmethod ,accessor-symbol ((this ,class-name))
-     (with-slots (bus service path interface) this
-       (dbus-get-property bus service path interface
+     (with-slots (bus service path) this
+       (dbus-get-property bus service path ,interface
                           ,property-name))))
 
-(defun debase--property->error-accessor (class-name accessor-symbol property-name)
+(defun debase--property->error-accessor (class-name interface accessor-symbol property-name)
   "Return an error property accessor.
 
 This is used for write-only D-Bus propertues.
@@ -137,7 +138,7 @@ it to the CLASS-NAME class."
   `(cl-defmethod ,accessor-symbol ((this ,class-name))
      (error "Property `%s' isn't readable" ,property-name)))
 
-(defun debase--property->slot (class-name property-def)
+(defun debase--property->slot (class-name interface property-def)
   "Return slot def & helpers for D-Bus PROPERTY-DEF in CLASS-NAME.
 
    Returns a list of (SLOT-DEF [HELPER...])"
@@ -153,6 +154,7 @@ it to the CLASS-NAME class."
                        'debase--property->dbus-accessor
                      'debase--property->error-accessor)
                    class-name
+                   interface
                    accessor
                    property-name)
           slot-and-helpers)
@@ -197,7 +199,7 @@ it to the CLASS-NAME class."
          (class-name (intern (debase--interface->name interface-def)))
          (properties (debase--interface-properties interface-def))
          (methods (debase--interface-methods interface-def))
-         (slots-and-helpers (mapcar (apply-partially #'debase--property->slot class-name) properties)))
+         (slots-and-helpers (mapcar (apply-partially #'debase--property->slot class-name interface-name) properties)))
     `(prog1
          (defclass ,class-name
            (debase--dbus)             ; Inherit from this base
