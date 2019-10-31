@@ -204,9 +204,9 @@ it to the CLASS-NAME class."
          (defclass ,class-name
            (debase--dbus)             ; Inherit from this base
 
-           ((bus :initform ,bus)
-            (service :initform ,service)
-            (path :initform ,path)
+           (,(when bus `(bus :initform ,bus))
+            ,(when service `(service :initform ,service))
+            ,(when path `(path :initform ,path))
             (interface :initform ,interface-name)
            ,@(mapcar #'car slots-and-helpers)))
        ;; TODO:
