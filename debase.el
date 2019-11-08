@@ -94,7 +94,7 @@
 (defun debase--interface->methods (class-name interface-def)
   "Return EIEIO methods for INTERFACE-DEF, bound to CLASS-NAME."
   (mapcar (apply-partially #'debase--interface-method->defmethod class-name
-                           (cdr (assoc 'name (dom-attributes interface-name))))
+                           (cdr (assoc 'name (dom-attributes interface-def))))
           (debase--interface-methods interface-def)))
 
 (defun debase--property-readable? (property-def)
@@ -223,10 +223,11 @@ it to the CLASS-NAME class."
   "Define class and methods for SERVICE, PATH, and INTERFACE, on BUS.
 
    The class name is taken from the interface, and cannot be specified."
-  (let ((interface-def (thread-first
-                            (dbus-introspect-xml bus service path)
-                          (debase--interface interface))))
-    (eval (define-debase-interface* interface-def bus service path))))
+  (if-let ((interface-def (thread-first
+                              (dbus-introspect-xml bus service path)
+                            (debase--interface interface))))
+      (eval (define-debase-interface* interface-def bus service path))
+    (error "Introspection failed")))
 
  ;; Tests
 
