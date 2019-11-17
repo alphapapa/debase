@@ -90,7 +90,7 @@
         (args (debase--interface-method->arglist method-def)))
     `(cl-defmethod ,(intern (debase--name-mangle method-name)) ((obj ,class-name) ,@args)
        (with-slots (bus service path) obj
-         (dbus-call-method bus service path ,interface
+         (dbus-call-method bus service path ,interface-name
                            ,method-name
                            ,@args)))))
 
