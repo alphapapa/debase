@@ -75,9 +75,12 @@
 (defun debase--interface-method->arglist (method-def)
   "Return the CL argument list for METHOD-DEF."
   (cl-loop for child in (dom-non-text-children method-def)
+           with i = 0
            when (eq 'arg (dom-tag child))
            when (string= "in" (cdr (assoc 'direction (dom-attributes child))))
-           collect (intern (cdr (assoc 'name (dom-attributes child))))))
+           collect (intern (or (cdr (assoc 'name (dom-attributes child)))
+                               (format "arg%d" i)))
+           do (incf i)))
 
 (defun debase--interface-method->defmethod (class-name interface-name method-def)
   "Return the EIEIO method definition for method METHOD-DEF.
@@ -268,6 +271,11 @@ it to the CLASS-NAME class."
                                           ((type . "a{sv}")
                                            (name . "GlobalDnsConfiguration")
                                            (access . "readwrite")))))))
+
+(ert-deftest debase--test--interface-method->arglist ()
+  (should (equal '(arg0) (debase--interface-method->arglist '(method ((name . "Reload")) "\n      " (arg ((type . "u") (direction . "in"))) "\n    "))))
+
+  (should (equal '(flags) (debase--interface-method->arglist '(method ((name . "Reload")) "\n      " (arg ((type . "u") (name . "flags") (direction . "in"))) "\n    ")))))
 
 (provide 'debase)
 ;;; debase.el ends here
