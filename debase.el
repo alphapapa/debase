@@ -31,6 +31,9 @@
 (require 'gv)
 (require 'dom)
 
+(defvar debase--class-cache nil
+  "Cache for already-created classes.  The interface name is the key.")
+
 (cl-defun debase--name-mangle (dbus-name &key (prefix "db-"))
   "Mangle DBUS-NAME into something Lispier.
 
@@ -226,11 +229,14 @@ it to the CLASS-NAME class."
   "Define class and methods for SERVICE, PATH, and INTERFACE, on BUS.
 
    The class name is taken from the interface, and cannot be specified."
-  (if-let ((interface-def (thread-first
-                              (dbus-introspect-xml bus service path)
-                            (debase--interface interface))))
-      (eval (define-debase-interface* interface-def bus service path))
-    (error "Introspection failed")))
+  (or (cdr (assoc interface debase--class-cache))
+      (if-let ((interface-def (thread-first
+                                  (dbus-introspect-xml bus service path)
+                                (debase--interface interface))))
+          (cdar (push (cons interface
+                            (eval (define-debase-interface* interface-def bus service path)))
+                      debase--class-cache))
+        (error "Introspection failed"))))
 
  ;; Tests
 
