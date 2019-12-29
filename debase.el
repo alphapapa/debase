@@ -238,50 +238,7 @@ it to the CLASS-NAME class."
                       debase--class-cache))
         (error "Introspection failed"))))
 
- ;; Tests
 
-(ert-deftest debase--test-property-readable? ()
-  (should (debase--property-readable? '(property ((type . "ao") (name . "Devices") (access . "read")))))
-  (should (debase--property-readable? '(property ((type . "ao") (name . "Devices") (access . "readwrite")))))
-  (should (null (debase--property-readable? '(property ((type . "ao") (name . "Devices") (access . "write")))))))
-
-
-(ert-deftest debase--test-property-writeable? ()
-  (should (null (debase--property-writeable? '(property ((type . "ao") (name . "Devices") (access . "read"))))))
-  (should (eq t (debase--property-writeable? '(property ((type . "ao") (name . "Devices") (access . "write"))))))
-  (should (eq t (debase--property-writeable? '(property ((type . "ao") (name . "Devices") (access . "readwrite")))))))
-
-(ert-deftest debase--test-name-mangle ()
-  (should (string= "db-foo-bar" (debase--name-mangle "FooBar")))
-  (should (string= "foo-bar" (debase--name-mangle "FooBar" :prefix nil))))
-
-
-(defun debase--interface->name (interface-def)
-  "Return the EIEIO class name for D-Bus interface INTERFACE-DEF."
-  (thread-last (dom-attributes interface-def)
-    (assoc 'name)
-    cdr
-    (replace-regexp-in-string "^org\\.freedesktop\\." "")
-    (replace-regexp-in-string "\\." "-")
-    debase--name-mangle))
-
-(ert-deftest debase--test-interface->name ()
-  (should (string= "db-network-manager"
-                   (debase--interface->name '((interface
-                                                 ((name . "org.freedesktop.NetworkManager"))))))))
-
-(ert-deftest debase--test-property->slotdef ()
-  (should (equal
-           '(global-dns-configuration :type t :accessor db-prop-global-dns-configuration)
-           (debase--property->slotdef '(property
-                                          ((type . "a{sv}")
-                                           (name . "GlobalDnsConfiguration")
-                                           (access . "readwrite")))))))
-
-(ert-deftest debase--test--interface-method->arglist ()
-  (should (equal '(arg0) (debase--interface-method->arglist '(method ((name . "Reload")) "\n      " (arg ((type . "u") (direction . "in"))) "\n    "))))
-
-  (should (equal '(flags) (debase--interface-method->arglist '(method ((name . "Reload")) "\n      " (arg ((type . "u") (name . "flags") (direction . "in"))) "\n    ")))))
 
 (provide 'debase)
 ;;; debase.el ends here
