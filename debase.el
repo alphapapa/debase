@@ -31,6 +31,9 @@
 (require 'gv)
 (require 'dom)
 
+(defconst debase--prefix "debase-"
+  "Default prefix for Debase-generated symbols.")
+
 (defvar debase--class-cache nil
   "Cache for already-created classes.  The interface name is the key.")
 
@@ -46,7 +49,7 @@
    ex. FooBARQuux -> foo-bar-quux."
   (let ((case-fold-search)
         (prefix (cond ((memq :prefix options) (plist-get options :prefix))
-                      (t "debase-"))))
+                      (t debase--prefix))))
     (concat prefix (downcase (replace-regexp-in-string "\\([a-z]\\)\\([A-Z]\\)" "\\1-\\2" dbus-name)))))
 
 (defun debase-interface-names (xml)
@@ -285,7 +288,7 @@ OPTIONS allows specification of paramaters which control the generated class.
                               (apply #'define-debase-interface* interface-def options)))
                     (cons 'debase--dbus-object)))
          (class-name
-          (gensym (concat (or (plist-get options :prefix) "debase-") "composite--" (mapconcat #'symbol-name classes "&")))))
+          (gensym (concat (or (plist-get options :prefix) debase--prefix) "composite--" (mapconcat #'symbol-name classes "&")))))
 
     (message "Defining class %s, composite of %s" class-name classes)
 
