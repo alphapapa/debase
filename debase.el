@@ -34,18 +34,30 @@
 (defvar debase--class-cache nil
   "Cache for already-created classes.  The interface name is the key.")
 
-(cl-defun debase--name-mangle (dbus-name &key (prefix "db-"))
+(defvar debase--ignore-interfaces
+  '("org.freedesktop.DBus.Properties"
+    "org.freedesktop.DBus.Introspectable"
+    "org.freedesktop.DBus.Peer")
+  "Interfaces to ignore.")
+
+(defun debase--name-mangle (options dbus-name)
   "Mangle DBUS-NAME into something Lispier.
 
    ex. FooBARQuux -> foo-bar-quux."
-  (let ((case-fold-search))
+  (let ((case-fold-search)
+        (prefix (cond ((memq :prefix options) (plist-get options :prefix))
+                      (t "debase-"))))
     (concat prefix (downcase (replace-regexp-in-string "\\([a-z]\\)\\([A-Z]\\)" "\\1-\\2" dbus-name)))))
 
-(defun debase-interfaces (xml)
-  "Return a list of supported D-Bus interfaces in XML."
+(defun debase-interface-names (xml)
+  "Return a list of supported D-Bus interface names in XML."
   (cl-loop for child in (dom-non-text-children xml)
            when (eq 'interface (dom-tag child))
-           collect (cdr (assoc 'name (dom-attributes child)))))
+           collect (debase-interface-name child)))
+
+(defun debase-interface-name (interface-def)
+  "Return the name of the interface in INTERFACE-DEF XML."
+  (cdr (assoc 'name (dom-attributes interface-def))))
 
 (defun debase--interface (xml interface-name)
   "Return definition of interface INTERFACE-NAME from introspected XML."
@@ -66,14 +78,14 @@
            when (eq 'method (dom-tag child))
            collect child))
 
-(defun debase--interface->name (interface-def)
+(defun debase--interface->name (interface-def &optional options)
   "Return the EIEIO class name for D-Bus interface INTERFACE-DEF."
   (thread-last (dom-attributes interface-def)
     (assoc 'name)
     cdr
     (replace-regexp-in-string "^org\\.freedesktop\\." "")
     (replace-regexp-in-string "\\." "-")
-    debase--name-mangle))
+    (debase--name-mangle options)))
 
 (defun debase--interface-method->arglist (method-def)
   "Return the CL argument list for METHOD-DEF."
@@ -85,21 +97,21 @@
                                (format "arg%d" i)))
            do (incf i)))
 
-(defun debase--interface-method->defmethod (class-name interface-name method-def)
+(defun debase--interface-method->defmethod (options class-name interface-name method-def)
   "Return the EIEIO method definition for method METHOD-DEF.
 
    The method will be dispatched on EIEIO class CLASS-NAME."
   (let ((method-name (cdr (assoc 'name (dom-attributes method-def))))
         (args (debase--interface-method->arglist method-def)))
-    `(cl-defmethod ,(intern (debase--name-mangle method-name)) ((obj ,class-name) ,@args)
+    `(cl-defmethod ,(intern (debase--name-mangle options method-name)) ((obj ,class-name) ,@args)
        (with-slots (bus service path) obj
          (dbus-call-method bus service path ,interface-name
                            ,method-name
                            ,@args)))))
 
-(defun debase--interface->methods (class-name interface-def)
+(defun debase--interface->methods (options class-name interface-def)
   "Return EIEIO methods for INTERFACE-DEF, bound to CLASS-NAME."
-  (mapcar (apply-partially #'debase--interface-method->defmethod class-name
+  (mapcar (apply-partially #'debase--interface-method->defmethod options class-name
                            (cdr (assoc 'name (dom-attributes interface-def))))
           (debase--interface-methods interface-def)))
 
@@ -110,17 +122,19 @@
         (string= "readwrite" access))))
 
 (defun debase--property-writeable? (property-def)
-  "Is the property specified in PROPERTY-DEF readable?"
+  "Is the property specified in PROPERTY-DEF writeable?"
   (let ((access (cdr (assoc 'access (dom-attributes property-def)))))
     (or (string= "write" access)
         (string= "readwrite" access))))
 
-(defun debase--property->slotdef (property-def)
+(defun debase--property->slotdef (property-def &optional options)
   "Return slot definition for property PROPERTY-DEF."
   (let ((property-name (cdr (assoc 'name (dom-attributes property-def)))))
-    `(,(intern (debase--name-mangle property-name :prefix nil))
+    ;; Ignore the prefix for the property name.
+    `(,(intern (debase--name-mangle '(:prefix nil) property-name))
       :type t                           ; lol ugh FIXME
-      :accessor ,(intern (debase--name-mangle (concat "prop-" property-name))))))
+      ;; But use it for the accessor.
+      :accessor ,(intern (debase--name-mangle options (concat "prop-" property-name))))))
 
 (defun debase--property->dbus-accessor (class-name interface accessor-symbol property-name)
   "Return a default (D-Bus) property accessor.
@@ -179,6 +193,12 @@ it to the CLASS-NAME class."
     (reverse slot-and-helpers)))
 
 (defclass debase--dbus ()
+  ((interface :type string
+              :documentation "D-Bus interface this class implements."))
+  :abstract t
+  :documentation "Base class for D-Bus interface classes.")
+
+(defclass debase--dbus-object ()
   ((bus :initarg :bus
         :type symbol
         :documentation "Bus the D-Bus object is on.")
@@ -188,21 +208,19 @@ it to the CLASS-NAME class."
    (path :initarg :path
          :type string
          :documentation "Path to D-Bus object.")
-   (interface :initarg :interface
-              :type string
-              :documentation "D-Bus interface this class implements."))
+   (interfaces :type list
+               :documentation "Interfaces this object implements."))
   :abstract t
   :documentation "Base class for D-Bus objects.")
 
-(defun define-debase-interface* (interface-def &optional bus service path)
+(defun define-debase-interface** (interface-def &rest options)
   "Define an EIEIO class and methods for D-Bus interface INTERFACE-DEF.
 
-   When BUS, SERVICE, or PATH are non-nil, they specify the
-   default target of the interface.  This is useful for
-   well-known D-Bus services which always have a single instance
-   at a well-known location."
+OPTIONS is an alist supporting the following keywords:
+
+  :prefix - Generated symbols will be prefixed by this string, instead of `debase-'."
   (let* ((interface-name (cdr (assoc 'name (dom-attributes interface-def))))
-         (class-name (intern (debase--interface->name interface-def)))
+         (class-name (intern (debase--interface->name interface-def options)))
          (properties (debase--interface-properties interface-def))
          (methods (debase--interface-methods interface-def))
          (slots-and-helpers (mapcar (apply-partially #'debase--property->slot class-name interface-name) properties)))
@@ -210,35 +228,72 @@ it to the CLASS-NAME class."
          (defclass ,class-name
            (debase--dbus)             ; Inherit from this base
 
-           (,(when bus `(bus :initform ,bus))
-            ,(when service `(service :initform ,service))
-            ,(when path `(path :initform ,path))
-            (interface :initform ,interface-name)
+           ((interface :initform ,interface-name)
            ,@(mapcar #'car slots-and-helpers)))
        ;; TODO:
        ;; - Maybe(?) override constructor with one that fetches property values.
        ;; - Override constructor with one that subscribes to property updates.
 
        ;; Interface methods
-       ,@(debase--interface->methods class-name interface-def)
+       ,@(debase--interface->methods options class-name interface-def)
 
        ;; Slot helpers -- getters and setf support.
        ,@(apply #'append (mapcar #'cdr slots-and-helpers)))))
 
-(defun define-debase-interface (bus service path interface)
+(defun define-debase-interface* (interface-def &rest options)
+  (let ((interface-name (debase-interface-name interface-def)))
+    (cdr (or (and (not (plist-get options :no-cache))
+                  (assoc interface-name debase--class-cache))
+             (car (push (cons interface-name
+                              (eval (apply 'define-debase-interface** interface-def options)))
+                        debase--class-cache))))))
+
+(defun define-debase-interface (bus service path interface &rest options)
   "Define class and methods for SERVICE, PATH, and INTERFACE, on BUS.
 
-   The class name is taken from the interface, and cannot be specified."
-  (or (cdr (assoc interface debase--class-cache))
-      (if-let ((interface-def (thread-first
-                                  (dbus-introspect-xml bus service path)
-                                (debase--interface interface))))
-          (cdar (push (cons interface
-                            (eval (define-debase-interface* interface-def bus service path)))
-                      debase--class-cache))
-        (error "Introspection failed"))))
+The class name is generated using a prefix and the name of the interface.
 
+OPTIONS allows specification of paramaters which control the generated class.
 
+`:prefix' is a string which will be prepended to symbols.  The
+ default is \"debase-\".
+
+`:no-cache', when non-nil, will generate a new class instead of
+ looking for one in `debase--class-cache'."
+  (if-let ((interface-def (thread-first
+                              (dbus-introspect-xml bus service path)
+                            (debase--interface interface))))
+      (apply #'define-debase-interface* interface-def options)
+    (error "Introspection failed")))
+
+(defun debase--object-interfaces (xml &optional interfaces)
+  (cl-loop for interface in
+           (let ((object-interfaces (debase-interfaces xml)))
+             (cond
+              ((eq interfaces :all) object-interfaces)
+              ((consp interfaces) interfaces)
+              (t (cl-loop for interface in object-interfaces
+                 unless (member interface debase--ignore-interfaces)
+                 collect interface))))
+
+           collect (debase--interface xml interface)))
+
+(defun debase-make-instance (bus service path &rest options)
+  (let* ((classes (thread-last (plist-get options :interfaces)
+                    (debase--object-interfaces (dbus-introspect-xml bus service path))
+                    (mapcar (lambda (interface-def)
+                              (apply #'define-debase-interface* interface-def options)))
+                    (cons 'debase--dbus-object)))
+         (class-name
+          (gensym (concat (or (plist-get options :prefix) "debase-") "composite--" (mapconcat #'symbol-name classes "&")))))
+
+    (message "Defining class %s, composite of %s" class-name classes)
+
+    (eval `(defclass ,class-name ,classes nil))
+    (make-instance class-name
+                   :bus bus
+                   :service service
+                   :path path)))
 
 (provide 'debase)
 ;;; debase.el ends here

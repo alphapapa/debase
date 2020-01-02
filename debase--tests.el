@@ -39,23 +39,19 @@
   (should (eq t (debase--property-writeable? '(property ((type . "ao") (name . "Devices") (access . "readwrite")))))))
 
 (ert-deftest debase-test--name-mangle ()
-  (should (string= "db-foo-bar" (debase--name-mangle "FooBar")))
-  (should (string= "foo-bar" (debase--name-mangle "FooBar" :prefix nil))))
-
-
-(defun debase--interface->name (interface-def)
-  "Return the EIEIO class name for D-Bus interface INTERFACE-DEF."
-  (thread-last (dom-attributes interface-def)
-    (assoc 'name)
-    cdr
-    (replace-regexp-in-string "^org\\.freedesktop\\." "")
-    (replace-regexp-in-string "\\." "-")
-    debase--name-mangle))
+  (should (string= "db-foo-bar" (debase--name-mangle nil "FooBar")))
+  (should (string= "foo-bar" (debase--name-mangle '(:prefix nil) "FooBar")))
+  (should (string= "msvfoo-bar" (debase--name-mangle '(:prefix "msv") "FooBar")))
+  (should (string= "msv-foo-bar" (debase--name-mangle '(:prefix "msv-") "FooBar"))))
 
 (ert-deftest debase-test--interface->name ()
   (should (string= "db-network-manager"
                    (debase--interface->name '((interface
-                                               ((name . "org.freedesktop.NetworkManager"))))))))
+                                               ((name . "org.freedesktop.NetworkManager")))))))
+
+  (should (string= "nm-network-manager"
+                   (debase--interface->name '((interface
+                                               ((name . "org.freedesktop.NetworkManager")))) '(:prefix "nm-")))))
 
 (ert-deftest debase-test--property->slotdef ()
   (should (equal
