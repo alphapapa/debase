@@ -43,7 +43,7 @@
     "org.freedesktop.DBus.Peer")
   "Interfaces to ignore.")
 
-(defun debase--name-mangle (options dbus-name)
+(defun debase--name-mangle (dbus-name &optional options)
   "Mangle DBUS-NAME into something Lispier.
 
    ex. FooBARQuux -> foo-bar-quux."
@@ -81,12 +81,13 @@
 
 (defun debase--interface->name (interface-def &optional options)
   "Return the EIEIO class name for D-Bus interface INTERFACE-DEF."
-  (thread-last (dom-attributes interface-def)
-    (assoc 'name)
-    cdr
-    (replace-regexp-in-string "^org\\.freedesktop\\." "")
-    (replace-regexp-in-string "\\." "-")
-    (debase--name-mangle options)))
+  (debase--name-mangle
+   (thread-last (dom-attributes interface-def)
+     (assoc 'name)
+     cdr
+     (replace-regexp-in-string "^org\\.freedesktop\\." "")
+     (replace-regexp-in-string "\\." "-"))
+   options))
 
 (defun debase--interface-method->arglist (method-def)
   "Return the CL argument list for METHOD-DEF."
@@ -104,7 +105,7 @@
    The method will be dispatched on EIEIO class CLASS-NAME."
   (let ((method-name (cdr (assoc 'name (dom-attributes method-def))))
         (args (debase--interface-method->arglist method-def)))
-    `(cl-defmethod ,(intern (debase--name-mangle options method-name)) ((obj ,class-name) ,@args)
+    `(cl-defmethod ,(intern (debase--name-mangle method-name options)) ((obj ,class-name) ,@args)
        (with-slots (bus service path) obj
          (dbus-call-method bus service path ,interface-name
                            ,method-name
@@ -131,11 +132,11 @@
 (defun debase--property->slotdef (property-def &optional options)
   "Return slot definition for property PROPERTY-DEF."
   (let ((property-name (cdr (assoc 'name (dom-attributes property-def)))))
-    ;; Ignore the prefix for the property name.
-    `(,(intern (debase--name-mangle '(:prefix nil) property-name))
+    ;; Ignore the prefix for the property name's slot.
+    `(,(intern (debase--name-mangle property-name))
       :type t                           ; lol ugh FIXME
       ;; But use it for the accessor.
-      :accessor ,(intern (debase--name-mangle options (concat "prop-" property-name))))))
+      :accessor ,(intern (debase--name-mangle (concat "prop-" property-name) options)))))
 
 (defun debase--property->dbus-accessor (class-name interface accessor-symbol property-name)
   "Return a default (D-Bus) property accessor.
@@ -159,13 +160,13 @@ it to the CLASS-NAME class."
   `(cl-defmethod ,accessor-symbol ((this ,class-name))
      (error "Property `%s' isn't readable" ,property-name)))
 
-(defun debase--property->slot (class-name interface property-def)
+(defun debase--property->slot (class-name interface property-def &optional options)
   "Return slot def & helpers for D-Bus PROPERTY-DEF in CLASS-NAME.
 
    Returns a list of (SLOT-DEF [HELPER...])"
 
   ;; There's always a slot definition.
-  (let* ((slot-and-helpers (list (debase--property->slotdef property-def)))
+  (let* ((slot-and-helpers (list (debase--property->slotdef property-def options)))
          (slotname (caar slot-and-helpers))
          (accessor (plist-get (cdar (last slot-and-helpers)) :accessor))
          (property-name (cdr (assoc 'name (dom-attributes property-def)))))
@@ -219,12 +220,16 @@ it to the CLASS-NAME class."
 
 OPTIONS is an alist supporting the following keywords:
 
-  :prefix - Generated symbols will be prefixed by this string, instead of `debase-'."
+  :prefix - Generated symbols will be prefixed by this string, instead of `debase-'.
+  :name - The generated class will be named this."
   (let* ((interface-name (cdr (assoc 'name (dom-attributes interface-def))))
-         (class-name (intern (debase--interface->name interface-def options)))
+         (class-name (pcase (or (plist-get options :name)
+                                (debase--interface->name interface-def options))
+                       ((and s (pred symbolp)) s)
+                       ((and s (pred stringp)) (intern s))))
          (properties (debase--interface-properties interface-def))
          (methods (debase--interface-methods interface-def))
-         (slots-and-helpers (mapcar (apply-partially #'debase--property->slot class-name interface-name) properties)))
+         (slots-and-helpers (mapcar (lambda (prop-def) (debase--property->slot class-name interface-name prop-def options)) properties)))
     `(prog1
          (defclass ,class-name
            (debase--dbus)             ; Inherit from this base
