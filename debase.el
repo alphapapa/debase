@@ -71,15 +71,13 @@
 
 (defun debase--interface-properties (interface-def)
   "Return properties for D-Bus interface INTERFACE-DEF."
-  (cl-loop for child in (dom-non-text-children interface-def)
-           when (eq 'property (dom-tag child))
-           collect child))
+  (thread-first (lambda (child) (eq 'property (dom-tag child)))
+    (cl-remove-if-not (dom-non-text-children interface-def))))
 
 (defun debase--interface-methods (interface-def)
   "Return methods for D-Bus interface INTERFACE-DEF."
-  (cl-loop for child in (dom-non-text-children interface-def)
-           when (eq 'method (dom-tag child))
-           collect child))
+  (thread-first (lambda (child) (eq 'method (dom-tag child)))
+    (cl-remove-if-not (dom-non-text-children interface-def))))
 
 (defun debase--interface->name (interface-def &optional options)
   "Return the EIEIO class name for D-Bus interface INTERFACE-DEF."
