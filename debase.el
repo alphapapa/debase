@@ -203,7 +203,7 @@ it to the CLASS-NAME class."
 (defclass debase--dbus-object ()
   ((bus :initarg :bus
         :type symbol
-        :documentation "Bus the D-Bus object is on.")
+        :documentation "Bus the D-Bus service is on.")
    (service :initarg :service
             :type string
             :documentation "D-Bus service.")
