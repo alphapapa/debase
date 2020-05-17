@@ -215,7 +215,7 @@ it to the CLASS-NAME class."
   :abstract t
   :documentation "Base class for D-Bus objects.")
 
-(defun define-debase-interface** (interface-def &rest options)
+(defun debase--create-interface (interface-def &rest options)
   "Define an EIEIO class and methods for D-Bus interface INTERFACE-DEF.
 
 OPTIONS is an alist supporting the following keywords:
@@ -246,35 +246,32 @@ OPTIONS is an alist supporting the following keywords:
        ;; Slot helpers -- getters and setf support.
        ,@(apply #'append (mapcar #'cdr slots-and-helpers)))))
 
-(defun define-debase-interface* (interface-def &rest options)
+(defun debase--get-or-create-interface (interface-def &rest options)
+  "Return (or create) EIEIO class for INTERFACE-DEF, with OPTIONS.
+
+If an EIEIO class for INTERFACE-DEF is known to Debase, returns it.
+Otherwise, creates a new one and returns it.
+"
   (let ((interface-name (debase-interface-name interface-def)))
     (cdr (or (and (not (plist-get options :no-cache))
                   (assoc interface-name debase--class-cache))
              (car (push (cons interface-name
-                              (eval (apply 'define-debase-interface** interface-def options)))
+                              (eval (apply 'debase--create-interface interface-def options)))
                         debase--class-cache))))))
 
-(defun define-debase-interface (bus service path interface &rest options)
-  "Define class and methods for SERVICE, PATH, and INTERFACE, on BUS.
-
-The class name is generated using a prefix and the name of the interface.
-
-OPTIONS allows specification of paramaters which control the generated class.
-
-`:prefix' is a string which will be prepended to symbols.  The
- default is \"debase-\".
-
-`:no-cache', when non-nil, will generate a new class instead of
- looking for one in `debase--class-cache'."
-  (if-let ((interface-def (thread-first
-                              (dbus-introspect-xml bus service path)
-                            (debase--interface interface))))
-      (apply #'define-debase-interface* interface-def options)
-    (error "Introspection failed")))
-
 (defun debase--object-interfaces (xml &optional interfaces)
+  "Return D-Bus interface definitions INTERFACES from XML.
+
+If INTERFACES is nil, returns all interfaces except those in
+`debase--ignore-interfaces'.
+
+If INTERFACES is :all, returns all interfaces, even those in
+`debase--ignore-interfaces'.
+
+If INTERFACES is a list of strings, return interfaces matching them.
+"
   (cl-loop for interface in
-           (let ((object-interfaces (debase-interfaces xml)))
+           (let ((object-interfaces (debase-interface-names xml)))
              (cond
               ((eq interfaces :all) object-interfaces)
               ((consp interfaces) interfaces)
@@ -284,22 +281,31 @@ OPTIONS allows specification of paramaters which control the generated class.
 
            collect (debase--interface xml interface)))
 
-(defun debase-make-instance (bus service path &rest options)
-  (let* ((classes (thread-last (plist-get options :interfaces)
-                    (debase--object-interfaces (dbus-introspect-xml bus service path))
+(defun debase-make-class (class-name bus service path &rest options)
+  "Create a class representing D-Bus SERVICE, on BUS, at PATH."
+  (let* ((interfaces (debase--object-interfaces (dbus-introspect-xml bus service path)
+                                                (plist-get options :interfaces)))
+         (interface-names (mapcar 'debase-interface-name interfaces))
+         (classes (thread-last interfaces
                     (mapcar (lambda (interface-def)
-                              (apply #'define-debase-interface* interface-def options)))
+                              (apply #'debase--get-or-create-interface interface-def (plist-put options :name nil))))
                     (cons 'debase--dbus-object)))
-         (class-name
-          (gensym (concat (or (plist-get options :prefix) debase--prefix) "composite--" (mapconcat #'symbol-name classes "&")))))
+         (class-name (or class-name (gensym (concat (or (plist-get options :prefix) debase--prefix) "composite--" (mapconcat #'symbol-name classes "&"))))))
 
-    (message "Defining class %s, composite of %s" class-name classes)
+    (eval `(defclass ,class-name ,classes
+             ((interfaces :initform ,interface-names))
+             :documentation ,(concat
+                              "Debase composite class, representing an object with the following interfaces:\n\n - "
+                              (string-join interface-names "\n - "))))
+    class-name))
 
-    (eval `(defclass ,class-name ,classes nil))
-    (make-instance class-name
-                   :bus bus
-                   :service service
-                   :path path)))
+(defun debase-make-instance (bus service path &rest options)
+  "Create an instance of D-Bus SERVICE, on BUS, at PATH."
+  (make-instance
+   (apply 'debase-make-class (plist-get options :name) bus service path options)
+   :bus bus
+   :service service
+   :path path))
 
 (provide 'debase)
 ;;; debase.el ends here
